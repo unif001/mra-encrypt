@@ -6,7 +6,7 @@ const NodeRSA = require('node-rsa');
 export default function handler(req, res) {
   try {
     // Load the public key file
-    const publicKeyData = fs.readFileSync(path.join(process.cwd(), 'MRAPublicKey.crt'), 'utf8');
+const publicKeyData = fs.readFileSync(path.join(__dirname, 'MRAPublicKey.crt'), 'utf8');
 
     const key = new NodeRSA(publicKeyData);
     const payloadJSON = JSON.stringify(req.body.payload);
