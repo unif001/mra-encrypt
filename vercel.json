@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "builds": [
+    { "src": "api/rsa-encrypt.js", "use": "@vercel/node" }
+  ],
+  "routes": [
+    { "src": "/api/rsa-encrypt", "dest": "/api/rsa-encrypt.js" }
+  ]
+}
