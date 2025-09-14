@@ -1,25 +1,23 @@
-import fs from 'fs';
-import path from 'path';
-import { X509Certificate } from 'crypto';
-import NodeRSA from 'node-rsa';
+import fs from "fs";
+import path from "path";
+import { X509Certificate, publicEncrypt } from "crypto";
 
 export default function handler(req, res) {
   try {
-    // Load .crt file
-    const certPath = path.join(__dirname, 'MRAPublicKey.crt');
+    // Load certificate (.crt file from MRA)
+    const certPath = path.join(__dirname, "MRAPublicKey.crt");
     const certData = fs.readFileSync(certPath);
 
-    // Extract the public key from the certificate
+    // Extract public key in PEM format
     const x509 = new X509Certificate(certData);
-    const publicKeyPem = x509.publicKey.export({ type: 'spki', format: 'pem' });
+    const publicKeyPem = x509.publicKey.export({ type: "spki", format: "pem" });
 
-    // Initialize RSA with the extracted key
-    const key = new NodeRSA(publicKeyPem, 'pkcs8-public');
-
+    // Encrypt payload JSON
     const payloadJSON = JSON.stringify(req.body.payload);
-    const encrypted = key.encrypt(payloadJSON, 'base64');
+    const encryptedBuffer = publicEncrypt(publicKeyPem, Buffer.from(payloadJSON));
+    const encryptedBase64 = encryptedBuffer.toString("base64");
 
-    res.status(200).json({ encrypted });
+    res.status(200).json({ encrypted: encryptedBase64 });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

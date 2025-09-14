@@ -3,7 +3,5 @@
   "version": "1.0.0",
   "description": "MRA RSA Encryption for Zoho Books",
   "main": "api/rsa-encrypt.js",
-  "dependencies": {
-    "node-rsa": "^1.1.1"
-  }
+  "dependencies": {}
 }
