@@ -1,16 +1,12 @@
 import fs from "fs";
 import path from "path";
-import { X509Certificate, publicEncrypt } from "crypto";
+import { publicEncrypt } from "crypto";
 
 export default function handler(req, res) {
   try {
-    // Load certificate (.crt file from MRA)
-    const certPath = path.join(__dirname, "MRAPublicKey.crt");
-    const certData = fs.readFileSync(certPath);
-
-    // Extract public key in PEM format
-    const x509 = new X509Certificate(certData);
-    const publicKeyPem = x509.publicKey.export({ type: "spki", format: "pem" });
+    // Load PEM-formatted public key
+    const keyPath = path.join(__dirname, "MRAPublicKey.pem");
+    const publicKeyPem = fs.readFileSync(keyPath, "utf8");
 
     // Encrypt payload JSON
     const payloadJSON = JSON.stringify(req.body.payload);
