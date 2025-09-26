@@ -1,21 +1,20 @@
-import fs from "fs";
-import path from "path";
+// api/rsa-encrypt.js
 import { publicEncrypt } from "crypto";
 
 export default function handler(req, res) {
   try {
-    // Load PEM-formatted public key
-    const keyPath = path.join(__dirname, "MRAPublicKey.pem");
-    const publicKeyPem = fs.readFileSync(keyPath, "utf8");
+    const publicKeyPem = process.env.MRA_PUBLIC_KEY;
+    if (!publicKeyPem) {
+      return res.status(500).json({ error: "MRA public key not configured" });
+    }
 
-    // Encrypt payload JSON
     const payloadJSON = JSON.stringify(req.body.payload);
     const encryptedBuffer = publicEncrypt(publicKeyPem, Buffer.from(payloadJSON));
     const encryptedBase64 = encryptedBuffer.toString("base64");
 
     res.status(200).json({ encrypted: encryptedBase64 });
   } catch (err) {
-    console.error(err);
+    console.error("rsa-encrypt error:", err);
     res.status(500).json({ error: err.message });
   }
 }
