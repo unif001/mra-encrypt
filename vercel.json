@@ -1,9 +1,12 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/rsa-encrypt.js", "use": "@vercel/node" }
+    { "src": "api/*.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/rsa-encrypt", "dest": "/api/rsa-encrypt.js" }
+    { "src": "/api/generate-aes", "dest": "/api/generate-aes.js" },
+    { "src": "/api/rsa-encrypt", "dest": "/api/rsa-encrypt.js" },
+    { "src": "/api/decrypt-aes", "dest": "/api/decrypt-aes.js" },
+    { "src": "/api/encrypt-invoice", "dest": "/api/encrypt-invoice.js" }
   ]
 }
