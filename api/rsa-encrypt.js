@@ -1,26 +1,24 @@
-// api/rsa-encrypt.js
 import { publicEncrypt, constants } from "crypto";
+import fs from "fs";
+import path from "path";
 
 export default function handler(req, res) {
   try {
-    const publicKeyPem = process.env.MRA_PUBLIC_KEY;
-    if (!publicKeyPem) {
-      return res.status(500).json({ error: "MRA public key not configured" });
-    }
+    // Resolve PEM file in the same folder as this API route
+    const keyPath = path.join(__dirname, "MRAPublicKey.pem");
+    const publicKeyPem = fs.readFileSync(keyPath, "utf8");
 
     const payloadJSON = JSON.stringify(req.body.payload);
 
-    // Explicitly set PKCS1 padding (required by MRA)
     const encryptedBuffer = publicEncrypt(
       {
         key: publicKeyPem,
-        padding: constants.RSA_PKCS1_PADDING
+        padding: constants.RSA_PKCS1_PADDING,
       },
       Buffer.from(payloadJSON)
     );
 
     const encryptedBase64 = encryptedBuffer.toString("base64");
-
     res.status(200).json({ encrypted: encryptedBase64 });
   } catch (err) {
     console.error("rsa-encrypt error:", err);
