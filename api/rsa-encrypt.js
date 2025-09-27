@@ -1,5 +1,5 @@
 // api/rsa-encrypt.js
-import { publicEncrypt } from "crypto";
+import { publicEncrypt, constants } from "crypto";
 
 export default function handler(req, res) {
   try {
@@ -9,7 +9,16 @@ export default function handler(req, res) {
     }
 
     const payloadJSON = JSON.stringify(req.body.payload);
-    const encryptedBuffer = publicEncrypt(publicKeyPem, Buffer.from(payloadJSON));
+
+    // Explicitly set PKCS1 padding (required by MRA)
+    const encryptedBuffer = publicEncrypt(
+      {
+        key: publicKeyPem,
+        padding: constants.RSA_PKCS1_PADDING
+      },
+      Buffer.from(payloadJSON)
+    );
+
     const encryptedBase64 = encryptedBuffer.toString("base64");
 
     res.status(200).json({ encrypted: encryptedBase64 });
