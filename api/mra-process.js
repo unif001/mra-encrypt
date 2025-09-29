@@ -1,176 +1,211 @@
 // api/mra-process.js
-import fetch from "node-fetch";
-
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") {
-      return res.status(405).json({ error: "Only POST allowed" });
+      return res.status(405).json({ error: "Method not allowed" });
     }
+
+    console.log("=== MRA eInvoice Process Started ===");
 
     const { invoice_id, invoice_number, invoice_data } = req.body;
 
-    if (!invoice_id || !invoice_data) {
-      return res.status(400).json({ error: "Missing invoice_id or invoice_data" });
-    }
-
-    // 🔹 1. Parse invoice_data from Zoho
-    let zohoInvoice;
-    try {
-      zohoInvoice = JSON.parse(invoice_data);
-    } catch (err) {
-      return res.status(400).json({ error: "Invalid JSON in invoice_data", details: err.message });
-    }
-
-    // 🔹 2. Map Zoho fields to MRA JSON structure
-    const seller = {
-      name: "Electrum Mauritius Limited",
-      tradeName: "Electrum Mauritius Limited",
-      tan: "27124193",
-      brn: "C11106429",
-      businessAddr: "Mauritius",
-      businessPhoneNo: "2302909090",
-      ebsCounterNo: "17532654219210HODNOBG13W",
-      cashierId: "SYSTEM",
-    };
-
-    const buyer = {
-      name: zohoInvoice.customer_name || "",
-      tan: "", // can map cf_tan later
-      brn: "", // can map cf_brn later
-      businessAddr: "",
-      buyerType: "VATR",
-      nic: "",
-    };
-
-    // 🔹 3. Items
-    let itemList = [];
-    try {
-      const lineItems = JSON.parse(zohoInvoice.line_items);
-      itemList = lineItems.map((li, index) => {
-        const tax = (li.line_item_taxes && li.line_item_taxes[0]) || {};
-        return {
-          itemNo: (index + 1).toString(),
-          nature: "GOODS",
-          productCodeMra: "",
-          productCodeOwn: li.item_id || "",
-          itemDesc: li.name || "",
-          quantity: li.quantity?.toString() || "1",
-          currency: zohoInvoice.currency_code || "MUR",
-          unitPrice: li.rate?.toString() || "0",
-          amtWoVatCur: li.item_total?.toString() || "0",
-          amtWoVatMur: li.item_total?.toString() || "0",
-          vatAmt: (tax.tax_amount || 0).toString(),
-          taxCode: tax.tax_name?.toUpperCase().includes("VAT") ? "TC01" : "TC02",
-          totalPrice: (li.item_total + (tax.tax_amount || 0)).toString(),
-          discount: "0",
-          discountedValue: "0",
-        };
+    if (!invoice_id || !invoice_number || !invoice_data) {
+      return res.status(400).json({
+        status: "ERROR",
+        message: "Missing required fields: invoice_id, invoice_number, invoice_data"
       });
-    } catch (err) {
-      console.error("Line item parse error:", err);
     }
 
-    // 🔹 4. Build invoice JSON (as per working Test Case 1)
-    const invoiceJSON = [{
+    // 🔹 Config
+    const MRA_USERNAME = "Electrum";
+    const MRA_PASSWORD = "Electrum@2025mra";
+    const EBS_MRA_ID  = "17532654219210HODNOBG13W";
+    const AREA_CODE   = "721";
+    const BASE_URL    = process.env.BASE_URL || "https://mra-encrypt-omega.vercel.app";
+
+    const RSA_URL       = `${BASE_URL}/api/rsa-encrypt`;
+    const AES_URL       = `${BASE_URL}/api/generate-aes`;
+    const DECRYPT_URL   = `${BASE_URL}/api/decrypt-aes`;
+    const ENCRYPT_INV   = `${BASE_URL}/api/encrypt-invoice`;
+
+    const TOKEN_URL     = "https://vfisc.mra.mu/einvoice-token-service/token-api/generate-token";
+    const TRANSMIT_URL  = "https://vfisc.mra.mu/realtime/invoice/transmit";
+
+    // ========================
+    // 🔹 STEP 0: MAP ZOHO → MRA
+    // ========================
+
+    const mraInvoice = {
       invoiceCounter: invoice_id,
+      invoiceIdentifier: `INV-${invoice_number}`,
       transactionType: "B2C",
       personType: "VATR",
       invoiceTypeDesc: "STD",
-      currency: zohoInvoice.currency_code || "MUR",
-      invoiceIdentifier: "INV-" + invoice_number,
+      currency: invoice_data.currency_code || "MUR",
       invoiceRefIdentifier: "",
       previousNoteHash: "0",
-      totalVatAmount: zohoInvoice.tax_total?.toString() || "0",
-      totalAmtWoVatCur: zohoInvoice.sub_total?.toString() || "0",
-      totalAmtWoVatMur: zohoInvoice.sub_total?.toString() || "0",
-      invoiceTotal: zohoInvoice.total?.toString() || "0",
-      discountTotalAmount: zohoInvoice.discount?.toString() || "0",
-      totalAmtPaid: zohoInvoice.total?.toString() || "0",
-      dateTimeInvoiceIssued: new Date().toISOString().replace("T"," ").substring(0,19),
-      seller,
-      buyer,
-      itemList,
-      salesTransactions: "CASH",
-    }];
+      totalVatAmount: invoice_data.tax_total || "0.00",
+      totalAmtWoVatCur: invoice_data.sub_total || "0.00",
+      totalAmtWoVatMur: invoice_data.sub_total || "0.00",
+      invoiceTotal: invoice_data.total || "0.00",
+      discountTotalAmount: invoice_data.discount || "0.00",
+      totalAmtPaid: invoice_data.total || "0.00",
+      dateTimeInvoiceIssued: (invoice_data.date || new Date().toISOString().substring(0, 19)).replace("T", " "),
+      seller: {
+        name: "Electrum Mauritius Limited",
+        tradeName: "Electrum Mauritius Limited",
+        tan: "27124193",
+        brn: "C11106429",
+        businessAddr: "Mauritius",
+        businessPhoneNo: "2302909090",
+        ebsCounterNo: EBS_MRA_ID,
+        cashierId: "SYSTEM"
+      },
+      buyer: {
+        name: invoice_data.customer_name || "Unknown Customer",
+        tan: "", // optional, can map from custom field if exists
+        brn: "",
+        businessAddr: invoice_data.billing_address?.address || "",
+        buyerType: "VATR",
+        nic: ""
+      },
+      itemList: (invoice_data.line_items || []).map((item, idx) => {
+        let taxAmt = 0;
+        let taxCode = "TC02"; // default non-VAT
+        if (item.line_item_taxes && item.line_item_taxes.length > 0) {
+          taxAmt = item.line_item_taxes[0].tax_amount || 0;
+          if ((item.line_item_taxes[0].tax_name || "").toUpperCase().includes("VAT")) {
+            taxCode = "TC01";
+          }
+        }
+        return {
+          itemNo: (idx + 1).toString(),
+          nature: "GOODS",
+          productCodeMra: "",
+          productCodeOwn: item.item_id || "",
+          itemDesc: item.name || "",
+          quantity: String(item.quantity || "1"),
+          unitPrice: String(item.rate || "0.00"),
+          amtWoVatCur: String(item.item_total || "0.00"),
+          amtWoVatMur: String(item.item_total || "0.00"),
+          vatAmt: String(taxAmt),
+          taxCode: taxCode,
+          totalPrice: String((item.item_total || 0) + taxAmt),
+          discount: String(item.discount_amount || "0"),
+          discountedValue: String(item.item_total || "0.00"),
+          currency: invoice_data.currency_code || "MUR"
+        };
+      }),
+      salesTransactions: "CASH"
+    };
 
-    // 🔹 5. AES Key
-    const aesResp = await fetch("https://mra-encrypt-omega.vercel.app/api/generate-aes");
-    const { aesKey } = await aesResp.json();
+    console.log("Mapped MRA Invoice JSON:", JSON.stringify(mraInvoice));
 
-    // 🔹 6. RSA Encrypt AES
-    const rsaResp = await fetch("https://mra-encrypt-omega.vercel.app/api/rsa-encrypt", {
+    // ========================
+    // 🔹 STEP 1: AES
+    // ========================
+    const aesResp = await fetch(AES_URL, { method: "GET" });
+    const aesData = await aesResp.json();
+    if (!aesData.aesKey) throw new Error("AES key generation failed");
+    const aesKey = aesData.aesKey;
+
+    // 🔹 Step 2: RSA
+    const rsaResp = await fetch(RSA_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        username: "Electrum",
-        password: "Electrum@2025mra",
-        encryptKey: aesKey,
-        refreshToken: "false"
+        payload: {
+          username: MRA_USERNAME,
+          password: MRA_PASSWORD,
+          encryptKey: aesKey,
+          refreshToken: "false"
+        }
       })
     });
-    const { encrypted } = await rsaResp.json();
+    const rsaData = await rsaResp.json();
+    if (!rsaData.encrypted) throw new Error("RSA encryption failed");
 
-    // 🔹 7. Generate Token
-    const tokenResp = await fetch("https://vfisc.mra.mu/einvoice-token-service/token-api/generate-token", {
+    // 🔹 Step 3: Token
+    const tokenResp = await fetch(TOKEN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "username": "Electrum",
-        "ebsMraId": "17532654219210HODNOBG13W",
-        "areaCode": "721"
+        "username": MRA_USERNAME,
+        "ebsMraId": EBS_MRA_ID,
+        "areaCode": AREA_CODE
       },
-      body: JSON.stringify({ requestId: "INV-" + invoice_number, payload: encrypted })
+      body: JSON.stringify({
+        requestId: `INV-${invoice_number}`,
+        payload: rsaData.encrypted
+      })
     });
     const tokenData = await tokenResp.json();
-
+    if (!tokenData.token) throw new Error("Token generation failed");
     const token = tokenData.token;
     const encKey = tokenData.key;
 
-    // 🔹 8. Decrypt AES
-    const decResp = await fetch("https://mra-encrypt-omega.vercel.app/api/decrypt-aes", {
+    // 🔹 Step 4: Decrypt AES
+    const decResp = await fetch(DECRYPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ encryptedKey: encKey, aesKey })
+      body: JSON.stringify({
+        encryptedKey: encKey,
+        aesKey: aesKey
+      })
     });
-    const { decryptedKey } = await decResp.json();
+    const decData = await decResp.json();
+    if (!decData.decryptedKey) throw new Error("AES decryption failed");
+    const finalAES = decData.decryptedKey;
 
-    // 🔹 9. Encrypt Invoice
-    const encInvoiceResp = await fetch("https://mra-encrypt-omega.vercel.app/api/encrypt-invoice", {
+    // 🔹 Step 5: Encrypt Invoice
+    const encInvoiceResp = await fetch(ENCRYPT_INV, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plainText: JSON.stringify(invoiceJSON), aesKey: decryptedKey })
+      body: JSON.stringify({
+        plainText: JSON.stringify([mraInvoice]), // must be array like in curl
+        aesKey: finalAES
+      })
     });
-    const { encryptedText } = await encInvoiceResp.json();
+    const encInvoiceData = await encInvoiceResp.json();
+    if (!encInvoiceData.encryptedText) throw new Error("Invoice encryption failed");
 
-    // 🔹 10. Transmit
-    const transmitResp = await fetch("https://vfisc.mra.mu/realtime/invoice/transmit", {
+    // 🔹 Step 6: Transmit
+    const transmitResp = await fetch(TRANSMIT_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "username": "Electrum",
-        "ebsMraId": "17532654219210HODNOBG13W",
-        "areaCode": "721",
+        "username": MRA_USERNAME,
+        "ebsMraId": EBS_MRA_ID,
+        "areaCode": AREA_CODE,
         "token": token
       },
       body: JSON.stringify({
-        requestId: "INV-" + invoice_number,
-        requestDateTime: new Date().toISOString().replace("T"," ").substring(0,19),
+        requestId: `INV-${invoice_number}`,
+        requestDateTime: new Date().toISOString().replace("T", " ").substring(0, 19),
         signedHash: "",
-        encryptedInvoice: encryptedText
+        encryptedInvoice: encInvoiceData.encryptedText
       })
     });
     const transmitData = await transmitResp.json();
 
+    // IRN extraction
+    let irn = "";
+    if (transmitData.fiscalisedInvoices && transmitData.fiscalisedInvoices.length > 0) {
+      irn = transmitData.fiscalisedInvoices[0].irn || "";
+    }
+
     return res.status(200).json({
       status: "SUCCESS",
-      invoice_id,
-      invoice_number,
-      invoice_json_preview: invoiceJSON,
-      transmit_response: transmitData
+      IRN: irn,
+      transmit_response: transmitData,
+      preview_json: mraInvoice
     });
 
   } catch (err) {
     console.error("MRA Process Error:", err);
-    return res.status(500).json({ error: "Internal Server Error", details: err.message });
+    return res.status(500).json({
+      status: "ERROR",
+      message: err.message
+    });
   }
 }
