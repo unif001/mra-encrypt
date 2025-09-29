@@ -31,10 +31,26 @@ export default async function handler(req, res) {
     const TOKEN_URL     = "https://vfisc.mra.mu/einvoice-token-service/token-api/generate-token";
     const TRANSMIT_URL  = "https://vfisc.mra.mu/realtime/invoice/transmit";
 
+    // 🔹 Date Formatter → yyyyMMdd HH:mm:ss
+    const formatDateTime = (dateInput) => {
+      const d = new Date(dateInput);
+      const pad = (n) => (n < 10 ? "0" + n : n);
+      return (
+        d.getFullYear().toString() +
+        pad(d.getMonth() + 1) +
+        pad(d.getDate()) +
+        " " +
+        pad(d.getHours()) +
+        ":" +
+        pad(d.getMinutes()) +
+        ":" +
+        pad(d.getSeconds())
+      );
+    };
+
     // ========================
     // 🔹 STEP 0: MAP ZOHO → MRA
     // ========================
-
     const mraInvoice = {
       invoiceCounter: invoice_id,
       invoiceIdentifier: `INV-${invoice_number}`,
@@ -44,13 +60,13 @@ export default async function handler(req, res) {
       currency: invoice_data.currency_code || "MUR",
       invoiceRefIdentifier: "",
       previousNoteHash: "0",
-      totalVatAmount: invoice_data.tax_total || "0.00",
-      totalAmtWoVatCur: invoice_data.sub_total || "0.00",
-      totalAmtWoVatMur: invoice_data.sub_total || "0.00",
-      invoiceTotal: invoice_data.total || "0.00",
-      discountTotalAmount: invoice_data.discount || "0.00",
-      totalAmtPaid: invoice_data.total || "0.00",
-      dateTimeInvoiceIssued: (invoice_data.date || new Date().toISOString().substring(0, 19)).replace("T", " "),
+      totalVatAmount: String(invoice_data.tax_total || "0.00"),
+      totalAmtWoVatCur: String(invoice_data.sub_total || "0.00"),
+      totalAmtWoVatMur: String(invoice_data.sub_total || "0.00"),
+      invoiceTotal: String(invoice_data.total || "0.00"),
+      discountTotalAmount: String(invoice_data.discount || "0.00"),
+      totalAmtPaid: String(invoice_data.total || "0.00"),
+      dateTimeInvoiceIssued: formatDateTime(invoice_data.date || new Date()),
       seller: {
         name: "Electrum Mauritius Limited",
         tradeName: "Electrum Mauritius Limited",
@@ -63,7 +79,7 @@ export default async function handler(req, res) {
       },
       buyer: {
         name: invoice_data.customer_name || "Unknown Customer",
-        tan: "", // optional, can map from custom field if exists
+        tan: "",
         brn: "",
         businessAddr: invoice_data.billing_address?.address || "",
         buyerType: "VATR",
@@ -162,7 +178,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        plainText: JSON.stringify([mraInvoice]), // must be array like in curl
+        plainText: JSON.stringify([mraInvoice]), // must be array
         aesKey: finalAES
       })
     });
@@ -181,7 +197,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         requestId: `INV-${invoice_number}`,
-        requestDateTime: new Date().toISOString().replace("T", " ").substring(0, 19),
+        requestDateTime: formatDateTime(new Date()),
         signedHash: "",
         encryptedInvoice: encInvoiceData.encryptedText
       })
