@@ -12,8 +12,7 @@ export default async function handler(req, res) {
     if (!invoice_id || !invoice_number || !invoice_data) {
       return res.status(400).json({
         status: "ERROR",
-        message:
-          "Missing required fields: invoice_id, invoice_number, invoice_data",
+        message: "Missing required fields: invoice_id, invoice_number, invoice_data",
       });
     }
 
@@ -32,12 +31,48 @@ export default async function handler(req, res) {
 
     const TOKEN_URL =
       "https://vfisc.mra.mu/einvoice-token-service/token-api/generate-token";
-    const TRANSMIT_URL = "https://vfisc.mra.mu/realtime/invoice/transmit";
+    const TRANSMIT_URL =
+      "https://vfisc.mra.mu/realtime/invoice/transmit";
+
+    // ========================
+    // 🔹 Helpers
+    // ========================
+    const formatInvoiceDateTime = (dateStr) => {
+      const d = dateStr ? new Date(dateStr) : new Date();
+      const yyyy = d.getFullYear();
+      const MM = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const HH = String(d.getHours()).padStart(2, "0");
+      const mm = String(d.getMinutes()).padStart(2, "0");
+      const ss = String(d.getSeconds()).padStart(2, "0");
+      return `${yyyy}${MM}${dd} ${HH}:${mm}:${ss}`;
+    };
+
+    // Parse Zoho JSON fields if they are stringified
+    let lineItems = [];
+    try {
+      lineItems =
+        typeof invoice_data.line_items === "string"
+          ? JSON.parse(invoice_data.line_items)
+          : invoice_data.line_items || [];
+    } catch (e) {
+      console.error("Error parsing line_items:", e);
+      lineItems = [];
+    }
+
+    let billingAddress = {};
+    try {
+      billingAddress =
+        typeof invoice_data.billing_address === "string"
+          ? JSON.parse(invoice_data.billing_address)
+          : invoice_data.billing_address || {};
+    } catch (e) {
+      billingAddress = {};
+    }
 
     // ========================
     // 🔹 STEP 0: MAP ZOHO → MRA
     // ========================
-
     const mraInvoice = {
       invoiceCounter: invoice_id,
       invoiceIdentifier: `INV-${invoice_number}`,
@@ -53,9 +88,7 @@ export default async function handler(req, res) {
       invoiceTotal: invoice_data.total || "0.00",
       discountTotalAmount: invoice_data.discount || "0.00",
       totalAmtPaid: invoice_data.total || "0.00",
-      dateTimeInvoiceIssued: (invoice_data.date ||
-        new Date().toISOString().substring(0, 19)
-      ).replace("T", " "),
+      dateTimeInvoiceIssued: formatInvoiceDateTime(invoice_data.date),
       seller: {
         name: "Electrum Mauritius Limited",
         tradeName: "Electrum Mauritius Limited",
@@ -63,48 +96,71 @@ export default async function handler(req, res) {
         brn: "C11106429",
         businessAddr: "Mauritius",
         businessPhoneNo: "2302909090",
-        ebsCounterNo: "", // ✅ leave blank (not EBS_MRA_ID)
+        ebsCounterNo: "", // ✅ keep blank
         cashierId: "SYSTEM",
       },
       buyer: {
         name: invoice_data.customer_name || "Unknown Customer",
-        tan: "", // optional, map from custom field if exists
+        tan: "",
         brn: "",
-        businessAddr: invoice_data.billing_address?.address || "",
+        businessAddr: billingAddress.address || "",
         buyerType: "VATR",
         nic: "",
       },
-      itemList: (invoice_data.line_items || []).map((item, idx) => {
-        let taxAmt = 0;
-        let taxCode = "TC02"; // default non-VAT
-        if (item.line_item_taxes && item.line_item_taxes.length > 0) {
-          taxAmt = item.line_item_taxes[0].tax_amount || 0;
-          if (
-            (item.line_item_taxes[0].tax_name || "")
-              .toUpperCase()
-              .includes("VAT")
-          ) {
-            taxCode = "TC01";
-          }
-        }
-        return {
-          itemNo: (idx + 1).toString(),
-          nature: "GOODS",
-          productCodeMra: "",
-          productCodeOwn: item.item_id || "",
-          itemDesc: item.name || "",
-          quantity: String(item.quantity || "1"),
-          unitPrice: String(item.rate || "0.00"),
-          amtWoVatCur: String(item.item_total || "0.00"),
-          amtWoVatMur: String(item.item_total || "0.00"),
-          vatAmt: String(taxAmt),
-          taxCode: taxCode,
-          totalPrice: String((item.item_total || 0) + taxAmt),
-          discount: String(item.discount_amount || "0"),
-          discountedValue: String(item.item_total || "0.00"),
-          currency: invoice_data.currency_code || "MUR",
-        };
-      }),
+      itemList:
+        lineItems.length > 0
+          ? lineItems.map((item, idx) => {
+              let taxAmt = 0;
+              let taxCode = "TC02";
+              if (item.line_item_taxes && item.line_item_taxes.length > 0) {
+                taxAmt = item.line_item_taxes[0].tax_amount || 0;
+                if (
+                  (item.line_item_taxes[0].tax_name || "")
+                    .toUpperCase()
+                    .includes("VAT")
+                ) {
+                  taxCode = "TC01";
+                }
+              }
+              return {
+                itemNo: (idx + 1).toString(),
+                nature: "GOODS",
+                productCodeMra: "",
+                productCodeOwn: item.item_id || "",
+                itemDesc: item.name || "",
+                quantity: String(item.quantity || "1"),
+                unitPrice: String(item.rate || "0.00"),
+                amtWoVatCur: String(item.item_total || "0.00"),
+                amtWoVatMur: String(item.item_total || "0.00"),
+                vatAmt: String(taxAmt),
+                taxCode: taxCode,
+                totalPrice: String(
+                  parseFloat(item.item_total || 0) + parseFloat(taxAmt || 0)
+                ),
+                discount: String(item.discount_amount || "0"),
+                discountedValue: String(item.item_total || "0.00"),
+                currency: invoice_data.currency_code || "MUR",
+              };
+            })
+          : [
+              {
+                itemNo: "1",
+                nature: "GOODS",
+                productCodeMra: "",
+                productCodeOwn: "DUMMY",
+                itemDesc: "Placeholder Item",
+                quantity: "1",
+                unitPrice: "0.00",
+                amtWoVatCur: "0.00",
+                amtWoVatMur: "0.00",
+                vatAmt: "0.00",
+                taxCode: "TC02",
+                totalPrice: "0.00",
+                discount: "0",
+                discountedValue: "0.00",
+                currency: invoice_data.currency_code || "MUR",
+              },
+            ],
       salesTransactions: "CASH",
     };
 
@@ -171,7 +227,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        plainText: JSON.stringify([mraInvoice]), // must be array like in curl
+        plainText: JSON.stringify([mraInvoice]), // must be array
         aesKey: finalAES,
       }),
     });
@@ -180,16 +236,6 @@ export default async function handler(req, res) {
       throw new Error("Invoice encryption failed");
 
     // 🔹 Step 6: Transmit
-    const formatDateTimeForMRA = () => {
-      const now = new Date();
-      const yyyy = now.getFullYear();
-      const MM = String(now.getMonth() + 1).padStart(2, "0");
-      const dd = String(now.getDate()).padStart(2, "0");
-      const HH = String(now.getHours()).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      return `${yyyy}-${MM}-${dd} ${HH}:${mm}`; // ✅ no seconds
-    };
-
     const transmitResp = await fetch(TRANSMIT_URL, {
       method: "POST",
       headers: {
@@ -201,7 +247,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         requestId: `INV-${invoice_number}`,
-        requestDateTime: formatDateTimeForMRA(), // ✅ fixed format
+        requestDateTime: formatInvoiceDateTime(new Date()),
         signedHash: "",
         encryptedInvoice: encInvoiceData.encryptedText,
       }),
